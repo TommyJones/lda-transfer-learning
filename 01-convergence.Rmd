@@ -1,0 +1,162 @@
+---
+title: "Convergence"
+author: "Tommy Jones"
+date: "7/15/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+```
+
+```{r libraries}
+library(tidyverse)
+library(tmsamples)
+library(tidytext)
+library(tidylda)
+library(magick)
+
+```
+
+
+```{r gen-parms, results='hide'}
+
+set.seed(8675309)
+
+Nv = 5000
+
+Nd = 10000
+
+Nk = 25
+
+z <- generate_zipf(vocab_size = Nv, magnitude = 1000)
+
+par <- sample_parameters(alpha = rep(0.1, Nk), beta = z, num_documents = Nd)
+
+doc_lengths <- rpois(Nd, 300)
+
+docs <- sample_documents(
+  theta = par$theta,
+  phi = par$phi,
+  doc_lengths = doc_lengths,
+  verbose = TRUE,
+  threads = 7
+)
+```
+
+```{r ll-plot}
+plot(log10(seq_along(z)), log10(sort(colSums(docs), decreasing = TRUE)), col = rgb(1,0,0,0.3), pch = 19)
+
+lines(log10(seq_along(z)), log10(z) + log10(max(colSums(docs))) - log10(max(z)), type = "l", lwd = 2)
+
+
+```
+
+```{r}
+
+tf <- textmineR::TermDocFreq(docs)
+
+stop_word_idx <- which(tf$doc_freq >= Nd - 5)
+
+batch_size <- 100
+
+batches <- seq(1, Nd, by = batch_size)
+
+batches <- map(batches, function(x) x:min(x + batch_size - 1, Nd))
+
+models <- vector(mode = "list", length = length(batches))
+
+models[[1]] <- tidylda(
+  data = docs[batches[[1]], -stop_word_idx],
+  k = 25,
+  iterations = 200,
+  burnin = 150,
+  alpha = 0.1,
+  eta = z[-stop_word_idx]
+)
+
+for (j in 2:length(models)) {
+  models[[j]] <- refit(
+    object = models[[j - 1]],
+    new_data = docs[batches[[j]],  -stop_word_idx],
+    iterations = 200,
+    burnin = 150,
+    calc_likelihood = TRUE
+  )
+}
+
+# Check the likelihood of the last model
+models[[length(models)]]$log_likelihood %>%
+  ggplot() + 
+  geom_line(aes(x = iteration, y = log_likelihood))
+
+```
+
+
+```{r hellinger}
+
+true_beta <- par$phi[, -stop_word_idx]
+
+hdist <- parallel::mclapply(
+  models, 
+  function(x) {
+    vocab <- intersect(colnames(x$beta), colnames(true_beta))
+    
+    apply(x$beta[, vocab], 1, function(y){
+      apply(true_beta[, vocab], 1, function(z) textmineR::CalcHellingerDist(y, z))
+    })
+  },
+  mc.cores = 7
+)
+
+# plot those suckers in a heatmap to make a gif
+for (j in seq_along(hdist)) {
+  
+  # label with leading zeros for files in order
+  lab <- if(nchar(j) == 1){
+    paste0("00", j)
+  } else if (nchar(j) == 2) {
+    paste0("0", j)
+  } else {
+    as.character(j)
+  }
+  
+  png(paste("output/converge-heatmap/img-", lab, ".png", sep = ""))
+  heatmap(
+    hdist[[j]], 
+    Rowv = NA, 
+    Colv = NA,
+    main = paste("Model in chain:", j)
+  )
+  dev.off()
+}
+
+## list file names and read in
+imgs <- list.files("output/converge-heatmap", full.names = TRUE)
+img_list <- lapply(imgs, image_read)
+
+## join the images together
+img_joined <- image_join(img_list)
+
+## animate at 2 frames per second
+img_animated <- image_animate(img_joined, fps = 10)
+
+## view animated image
+img_animated
+
+## save to disk
+image_write(image = img_animated,
+            path = "output/converge-heatmap.gif")
+
+```
+
+```{r save}
+save(
+  docs,
+  hdist,
+  models,
+  par,
+  file = "data-derived/convergence-data.RData"
+)
+```
+

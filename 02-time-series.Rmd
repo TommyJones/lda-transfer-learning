@@ -1,0 +1,141 @@
+---
+title: "Time Series"
+author: "Tommy Jones"
+date: "7/18/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+```
+
+```{r libraries}
+library(tidyverse)
+library(tmsamples)
+library(tidytext)
+library(tidylda)
+library(magick)
+
+```
+
+
+```{r gen-pars, results='hide'}
+
+
+# plan: 100 time periods
+# 20 topics to 25 topics
+# loose 3, gain 3
+# three trend down to zero, 3 trend up
+# other topic prevalence follows 0.1
+
+# set up alpha parameters for increasing and decreasing topics
+increasing <- c(rep(0, 20), seq(0, 2, length = 80))
+
+increasing <- rbind(increasing, increasing, increasing)
+
+decreasing <- c(seq(2, 0, length = 80), rep(0, 20))
+
+decreasing <- rbind(decreasing, decreasing, decreasing)
+
+static <- matrix(0.1, ncol = 100, nrow = 19)
+
+alpha_pars <- rbind(static, decreasing, increasing) %>%
+  as_tibble() %>%
+  mutate(
+    topic = 1:25
+  )
+
+# simulate parameters for each of 100 time periods
+set.seed(1600)
+
+Nv = 5000
+
+Nd = 400 # per time period
+
+Nk = 25
+
+z <- generate_zipf(vocab_size = Nv, magnitude = 1000)
+
+par <- alpha_pars %>%
+  select(-topic) %>%
+  apply(2, function(x) {
+    sample_parameters(alpha = x, beta = z, num_documents = Nd)
+  })
+
+docs <- par %>%
+  map(function(x) {
+    sample_documents(
+      theta = x$theta,
+      phi = x$phi,
+      doc_lengths = rpois(Nd, 300),
+      verbose = TRUE,
+      threads = 7
+    )
+  })
+
+
+```
+
+```{r model}
+
+models <- vector(mode = "list", length = 100)
+
+tf <- textmineR::TermDocFreq(docs[[1]])
+
+stop <- which(tf$doc_freq >= Nd - 5)
+
+a <- alpha_pars[[1]]
+
+a[ a == 0] <- 0.1
+
+e <- z[-stop]
+
+models[[1]] <- tidylda(
+  data = docs[[1]][, -stop],
+  k = Nk,
+  iterations = 200,
+  burnin = 150,
+  alpha = a,
+  eta = e
+)
+
+for (j in 2:length(models)) {
+  
+  tf <- textmineR::TermDocFreq(docs[[j]])
+  
+  stop <- which(tf$doc_freq >= Nd - 5)
+  
+  a <- alpha_pars[[j]]
+
+  a[ a == 0] <- 0.1
+
+  models[[j]] <- refit(
+    object = models[[j - 1]],
+    new_data = docs[[j]][, -stop],
+    iterations = 200,
+    burnin = 150,
+    calc_likelihood = TRUE
+  )
+}
+
+```
+
+```{r hdist}
+
+hdist <- parallel::mcmapply(
+  FUN = function(x, y) {
+    vocab <- intersect(colnames(x$beta), colnames(y$phi))
+    
+    apply(x$beta[, vocab], 1, function(p){
+      apply(y$phi[, vocab], 1, function(q) textmineR::CalcHellingerDist(p, q))
+    })
+  },
+  x = models,
+  y = par,
+  mc.cores = 7,
+  SIMPLIFY = FALSE
+)
+
+
+```
+

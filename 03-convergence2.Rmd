@@ -1,0 +1,248 @@
+---
+title: "sim ranges"
+author: "Tommy Jones"
+date: "7/21/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+```
+
+```{r libraries}
+library(tidyverse)
+library(tmsamples)
+library(tidytext)
+library(tidylda)
+library(magick)
+
+```
+
+
+```{r gen-pars, results='hide'}
+set.seed(8675309)
+
+Nv = 5000
+
+Nd = 10000
+
+Nk = 25
+
+gen_pars <- function(Nd, Nv, Nk, beta_sum, alpha_sum, alpha_shape = "flat") {
+  
+  z <- generate_zipf(vocab_size = Nv, magnitude = beta_sum)
+  
+  if (alpha_shape == "flat") {
+    a <- rep(alpha_sum / Nk, Nk)
+  } else {
+    a <- rgamma(Nk, 1)
+    
+    a <- a / sum(a) * alpha_sum
+  }
+  
+  par <- sample_parameters(alpha = a, beta = z, num_documents = Nd)
+  
+  par <- list(
+    par = par,
+    beta_sum = beta_sum,
+    alpha_sum = alpha_sum,
+    alpha_shape = alpha_shape
+  )
+}
+
+
+
+beta_sums <- c(100, 1000, 5000)
+
+alpha_sums <- c(1, 5, 10, 20)
+
+alpha_shapes <- c("flat", "asymmetric")
+
+doc_lengths <- c(50, 100, 200, 400)
+
+pars <- cross3(
+  alpha_sums, 
+  beta_sums, 
+  alpha_shapes
+) %>%
+  map(function(x) {
+    names(x) <- c("alpha_sum", "beta_sum", "alpha_shape")
+    x
+  }) %>%
+  map(function(x){
+    gen_pars(
+      Nd = Nd,
+      Nv = Nv,
+      Nk = Nk,
+      beta_sum = x$beta_sum,
+      alpha_sum = x$alpha_sum,
+      alpha_shape = x$alpha_shape
+    )
+  }) %>%
+  cross2(doc_lengths) %>%
+  map(function(x){
+    names(x) <- c("par", "doc_length")
+    
+    x
+  })
+
+
+
+
+```
+
+```{r end-to-end}
+
+
+hdist <- pars %>%
+  parallel::mclapply(
+    function(p) {
+      # pull out relevant objects
+      pop_pars <- p$par$par
+      
+      # generate documents
+      doc_lengths <- rpois(
+        n = nrow(pop_pars$theta),
+        lambda = p$doc_length
+      )
+      
+      docs <- sample_documents(
+        theta = pop_pars$theta,
+        phi = pop_pars$phi,
+        doc_lengths = doc_lengths,
+        threads = 4
+      )
+      
+      # divide docs into batches
+      batch_size <- 1000
+      
+      batches <- seq(1, nrow(docs), by = batch_size)
+      
+      batches <- map(batches, function(x) x:min(x + batch_size - 1, nrow(docs)))
+      
+      # model each batch successively
+      models <- vector(mode = "list", length = length(batches))
+      
+      z <- generate_zipf(vocab_size = ncol(docs), magnitude = p$par$beta_sum)
+      
+      d <- docs[batches[[1]], ]
+      
+      tf <- textmineR::TermDocFreq(d)
+      
+      vocab <- tf %>%
+        filter(doc_freq > 0 & doc_freq < nrow(d) - 5) %>%
+        select(term) %>%
+        .[[1]]
+      
+      k <- nrow(pop_pars$phi)
+      
+      if (p$par$alpha_shape == "flat") {
+        alpha <- rep(p$par$alpha_sum / k, k)
+      } else {
+        alpha <- rgamma(Nk, 1)
+        
+        alpha <- alpha / sum(alpha) * p$par$alpha_sum
+      }
+      
+      eta <- z[vocab]
+      
+      models[[1]] <- try({
+        tidylda(
+          data = d[, vocab],
+          k = k,
+          iterations = 200,
+          burnin = 150,
+          alpha = alpha,
+          eta = eta,
+          calc_likelihood = TRUE,
+          calc_r2 = TRUE,
+          verbose = TRUE
+        )
+      })
+      
+      for (j in 2:length(models)) {
+        
+        d <- docs[batches[[j]], ]
+        
+        tf <- textmineR::TermDocFreq(d)
+        
+        vocab <- tf %>%
+          filter(doc_freq > 0 & doc_freq < nrow(d) - 5) %>%
+          select(term) %>%
+          .[[1]]
+        
+        models[[j]] <- try({
+          refit(
+            object = models[[j - 1]],
+            new_data = d[, vocab],
+            iterations = 200,
+            burnin = 150,
+            calc_likelihood = TRUE
+          )
+        })
+        
+      }
+      
+      # tibble of relevant pars/perf metrics
+      
+      metrics <- models %>%
+        map(function(m) {
+          tibble(
+            coherence = try(mean(m$summary$coherence)),
+            likelihood = try(mean(
+              m$log_likelihood$log_likelihood[m$log_likelihood$iteration >= 150]
+            )),
+            prevalence = try(mean(m$summary$prevalence))
+          )
+        }) %>%
+        bind_rows() %>%
+        mutate(
+          beta_sum = p$par$beta_sum,
+          alpha_sum = p$par$alpha_sum,
+          alpha_shape = p$par$alpha_shape,
+          avg_doc_length = p$doc_length
+        )
+      
+      
+      # hdist between model and pars
+      hdist <- models %>%
+        map(function(m){
+          try({
+            vocab <- intersect(colnames(m$beta), colnames(pop_pars$phi))
+            
+            h <- apply(m$beta[, vocab], 1, function(p){
+              apply(pop_pars$phi[, vocab], 1, function(q){
+                textmineR::CalcHellingerDist(p, q)
+              })
+            })
+            h
+          })
+        })
+      
+      # list of hdist and tibble out
+      list(
+        metrics = metrics, 
+        hdist = hdist
+      )
+      
+      
+    },
+    mc.cores = 7
+  )
+
+
+
+```
+
+
+
+```{r save}
+
+save(
+  pars,
+  hdist,
+  file = "data-derived/convergence-data-2.RData"
+)
+
+```
+
