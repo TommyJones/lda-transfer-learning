@@ -1,0 +1,208 @@
+---
+title: "Fine Tuning Latent Dirichlet Allocation for Transfer Learning"
+
+author:
+  - Tommy Jones^[PhD Candidate, George Mason University Dept. of Computational and Data Sciences, tjones42@gmu.edu]
+  
+date: "`r format(Sys.time(), '%d %B %Y')`"
+  
+abstract: |
+  words.
+  
+bibliography: [topicmodels.bib,simulation.bib,zipf.bib,manual_entry.bib,transformers.bib,software.bib]
+csl: ieee.csl
+link-citations: yes
+# csl: acm-sig-proceedings.csl
+# output: rticles::acm_article
+
+header-includes:
+    - \usepackage{setspace}\doublespacing
+    - \usepackage[utf8]{inputenc}
+    - \usepackage[T1]{fontenc}
+    - \usepackage[ruled,vlined]{algorithm2e}
+output:
+  pdf_document:
+    number_sections: true
+    toc: false
+    toc_depth: 2
+  html_document:
+    toc: true
+    keep_md: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+Recent progress in natural language processing (NLP) has been driven by adoption of pre-trained language models. These models belong to the _fine tuning paradigm of transfer learning_ where researchers begin with a base mode,  $f^{(t-1)}$, which has been pre-trained using data, $\boldsymbol{X}^{(t-1)}$. They then update (i.e., "fine tune") the base model with new data, $\boldsymbol{X}^{(t)}$, to produce a new model, $f^{(t)}$. Popular examples of pre-trained language models include BERT [@bert2018], XLM-R [@xlm-r], GPT-2 [@gpt2], GPT-3 [@gpt3], and more. This generation of pre-trained language models are all deep neural networks. As a result, they excel at enabling supervised tasks such as summarization, named-entity recognition, classification, etc. but not at unsupervised topic detection where Latent Dirichlet Allocation (LDA) [@blei2002lda] and related models [@teh2006hdp][@blei2006dtm][@blei2007ctm][@roberts2019stm] remain popular.
+
+This paper introduces _tLDA_, short for transfer-LDA. tLDA enables use cases for fine-tuning from a base model with a single incremental update (i.e., "fine tuning") or with many incremental updates---e.g., on-line learning, possibly in a time-series context---using Latent Dirichlet Allocation. tLDA uses collapsed Gibbs sampling [@griffiths2004scientific] but its methods should extend to other MCMC methods [@yao2009streaming][@lightlda][@yahoolda][@chen2015warplda]. tLDA is available for the R language for statistical computing [@rlang] in the _tidylda_ package [@tidylda].
+
+## Latent Dirichlet Allocation
+
+Latent Dirichlet Allocation is a generative model for word frequencies. Let $\boldsymbol{X}$ be a $D \times V$ matrix of word frequencies where the $d,v$ entries are counts of the $v$-th word (or more generally, "token") occurring in the $d$-th document (or more generally, "context"). Under the LDA model, $\boldsymbol{X}$ occurs by sampling from the following process:
+
+1. Generate $\boldsymbol{B}$ by sampling $K$ topics: $\boldsymbol\beta_k \sim \text{Dirichlet}(\boldsymbol\eta), \forall k \in \{1,2,...,K\}$
+2. Generate $\boldsymbol\Theta$ by sampling $D$ documents: $\boldsymbol\theta_d \sim \text{Dirichlet}(\boldsymbol\alpha), \forall d \in \{1,2, ..., D\}$
+3. Then for each document, $d$, and for each word in that document, $n$
+    a. Draw topic $z_{d,n}$ from $\text{Categorical}(\boldsymbol\theta_d)$
+    b. Draw word $w_{d,n}$ from $\text{Categorical}(\boldsymbol\beta_{z_{d,n}})$
+    
+This process has a joint posterior of
+
+\begin{align}
+  P(\mathbf{W},\mathbf{Z},\boldsymbol\Theta,\boldsymbol{B}|\boldsymbol\alpha,\boldsymbol\eta)
+    &\propto \left[\prod_{d=1}^D \prod_{n=1}^{n_d} 
+      P(w_{d,n}|\boldsymbol\beta_{z_{d,n}})
+      P(z_{d,n}|\boldsymbol\theta_d)
+      P(\boldsymbol\theta_d|\boldsymbol\alpha)\right]
+      \left[\prod_{k=1}^K P(\boldsymbol\beta_k|\boldsymbol\eta)\right]
+\end{align}
+
+The above does not have an analytical closed form. However posterior estimates may be constructed using Gibbs sampling. Key are $D \times K$ matrix $\boldsymbol{Cd}$ and $K \times V$ matrix $\boldsymbol{Cv}$. $\boldsymbol{Cd}$ counts the number of times the $k$-th topic was sampled in the $d$-th document and $\boldsymbol{Cv}$ counts the number of times the $k$-th topic was sampled at the $v$-th word. Gibbs sampling is depicted in Algorithm 1. 
+
+\begin{algorithm}[H]
+\SetAlgoLined
+
+//Initialize $\boldsymbol{Cd}$, $\boldsymbol{Cv}$ as zero-valued matrices\;
+
+\For{each document, $d$ }{
+  \For{each word in the $d$-th context, $n$}{
+    sample $z$ such that $P(z = k) \sim \text{Uniform}(1, K)$\;
+    $Cd_{d,z}$ += 1\;
+    $Cv_{z,n}$ += 1;
+  }
+}
+
+//Begin Gibbs sampling \;
+
+\For{each iteration, $i$}{
+  \For{each document, $d$ }{
+    \For{each word in the $d$-th context, $n$}{
+      $Cd_{d, z^{(i-1)}}$ -= 1, $Cv_{z^{(i-1)}, n}$ -= 1\;
+      sample $z$ such that 
+      $P(z = k) = \frac{Cv_{k, n} + \eta_n}{\sum_{v=1}^V Cv_{k, v} + \eta_v} \cdot \frac{Cd_{d, k} + \alpha_k}{\left(\sum_{k=1}^K Cd_{d, k} + \alpha_k\right) - 1}$\;
+      $Cd_{d,z^{(i)}}$ += 1, $Cv_{z^{(i)},n}$ += 1\;
+    }
+  }
+}
+\caption{Allocate $\boldsymbol{Cd}$ and $\boldsymbol{Cv}$ by sampling}
+\end{algorithm}
+
+Once sampling is complete, one can derive posterior estimates with
+
+\begin{align}
+  \hat{\theta}_{d,k} &= 
+    \frac{Cd_{d,k} + \alpha_k}{\sum_{k = 1}^K Cd_{d,k} + \alpha_k} \\
+  \hat{\beta}_{k,v} &= 
+    \frac{Cv_{k,v} + \eta_v}{\sum_{v = 1}^V Cv_{k,v} + \eta_v}
+\end{align}
+
+## Related Work
+
+Work on transfer lerning with LDA and other probabilistic topic models falls into three categories. The first category contains topic models that explicitly model a topic's evolution over time [@blei2006dtm][@wang2012dynamic][@tmlda]. These models differ from true transfer learning in that time is explicitly part of the model, rather than being updated post-hoc. The second category contains models that allow external information to guide the development of topics. External information may be in the form of supervised outcomes [@mcauliffe2007supervised] [@ramage2009labled] [@andrzejewski2009latent], seeded by model structure [@jagarlamudi2012transfer], seeded in the prior [@andrzejewski2009], or constructed interactively with subject matter experts [@hu2014interactive]. The third category contains models designed for incremental and on-line learning [@alsumait2008][@hoffman2010online][@rollinglda].
+
+## Contribution
+tLDA is a model for updating topics in an existing model with new data, enabling incremental updates and time-series use cases. tLDA has three characteristics differentiating it from previous work:
+
+1. Flexibility - Most prior work can only address use cases from one of the above categories. In theory, tLDA can address all three. However, exploring use of tLDA to encode expert input into the $\boldsymbol\eta$ prior is left to future work.
+2. Tunability - tLDA introduces only a single new tuning parameter, $a$. Its use is intuitive, balancing the ratio of tokens in $\boldsymbol{X}^{(t)}$ to the base model's data, $\boldsymbol{X}^{(t-1)}$. 
+3. Analyticsl - tLDA allows data sets and model updates to be chained together preserving the Markov property, enabling analytical study through incremental updates.
+
+# tLDA
+
+## The Model
+
+Formally, tLDA can be stated as
+
+\begin{align}
+  z_{d,n}|\boldsymbol\theta_d &\sim 
+    \text{Categorical}(\boldsymbol\theta_d)\\
+  w_{d,n}|z_{k},\boldsymbol\beta_k^{(t)} &\sim
+    \text{Categorical}(\boldsymbol\beta_k^{(t)}) \\
+  \boldsymbol\theta_d &\sim
+    \text{Dirichlet}(\boldsymbol\alpha_d)\\
+  \boldsymbol\beta_k^{(t)} &\sim
+    \text{Dirichlet}(\omega_k^{(t)} \cdot \mathbb{E}\left[\boldsymbol\beta_k^{(t-1)}\right])
+\end{align}
+
+The above indicates that tLDA places a matrix prior for words over topics where $\boldsymbol\eta_k^{(t)} = \omega_k^{(t)} \cdot \mathbb{E}\left[\boldsymbol\beta_k^{(t-1)}\right]$. Because the posterior at time $t$ depends only on data at time $t$ and the state of the model at time $t-1$, tLDA models retain the Markov property.
+
+### Selecting the prior weight
+Each $\omega_k^{(t)}$ tunes the relative weight between the base model (as prior) and new data in the posterior for each topic. This specification introduces $K$ new tuning parameters and setting $\omega_k^{(t)}$ directly is possible but not intuitive. Yet introducing a new parameter and performing some algebra collapses these $K$ tuning parameters into a single parameter with several intutive critical values. This tuning parameter, $a^{(t)}$, is related to each $\omega_k^{t}$ as follows:
+
+\begin{align}
+  \omega_k^{(t)} &=
+    a^{(t)} \cdot \sum_{v = 1}^V Cv_{k,v}^{(t-1)} + \eta_{k,v}^{(t-1)}
+\end{align}
+
+Appendix 1 shows the full derivation of the relationship between $a^{(t)}$ and $\omega_k^{(t)}$.
+
+When $a^{(t)} = 1$, fine tuning is equivalent to adding the data in $\boldsymbol{X}^{(t)}$ to $\boldsymbol{X}^{(t-1)}$. In other words, each word occurrence in $\boldsymbol{X}^{(t)}$ carries the same weight in the posterior as each word occurrence in $\boldsymbol{X}^{(t-1)}$. If $\boldsymbol{X}^{(t)}$ has more data than $\boldsymbol{X}^{(t-1)}$, then it will carry more weight. If it has less, it will carry less.
+
+When $a^{(t)} < 1$, then the posterior has recency bias. Each word occurrence in $\boldsymbol{X}^{(t)}$ carries more weight than each word occurrence in $\boldsymbol{X}^{(t-1)}$. When When $a^{(t)} > 1$, then the posterior has precedent bias. Each word occurrence in $\boldsymbol{X}^{(t)}$ carries less weight than each word occurrence in $\boldsymbol{X}^{(t-1)}$.
+
+Another pair of critical values are $a^{(t)} = \frac{N^{(t)}}{N^{(t-1)}}$ and $a^{(t)} = \frac{N^{(t)}}{N^{(t-1)} +\sum_{d,v} \eta_{d,v}}$, where $N^{(\cdot)} = \sum_{d,v} X^{(\cdot)}_{d,v}$. These put the total number of word occurrences in $\boldsymbol{X}^{(t)}$ and $\boldsymbol{X}^{(t-1)}$ on equal footing excluding and including $\boldsymbol\eta^{(t-1)}$, respectively. These values may be useful when comparing topical differences between a baseline group in $\boldsymbol{X}^{(t-1)}$ and "treatment" group in $\boldsymbol{X}^{(t)}$, though this use case is left to future work.
+
+## The Algorithm
+The overall tLDA algorithm proceeds in 6 steps.
+
+1. Construct $\boldsymbol\eta^{(t)}$
+2. Predict $\boldsymbol\Theta^{(t)}$ using topics from $\boldsymbol{B}^{(t-1)}$
+3. Align vocabulary
+4. Add new topics
+5. Initialize $\boldsymbol{Cd}^{(t)}$ and $\boldsymbol{Cv}^{(t)}$
+6. Begin Gibbs sampling with $P(z = k) = \frac{Cv_{k, n} + \eta_{k,n}}{\sum_{v=1}^V Cv_{k, v} + \eta_{k,v}} \cdot \frac{Cd_{d, k} + \alpha_k}{\left(\sum_{k=1}^K Cd_{d, k} + \alpha_k\right) - 1}$
+
+Any real-world application of tLDA presents several practical issues which are addressed in steps 3 - 5, described in more detail below. These issues include: the vocabularies in $\boldsymbol{X}^{(t-1)}$ and $\boldsymbol{X}^{(t)}$ will not be identical; users may wish to add topics, expecting $\boldsymbol{X}^{(t)}$ to contain topics not in $\boldsymbol{X}^{(t-1)}$; and $\boldsymbol{Cd}^{(t)}$ and $\boldsymbol{Cv}^{(t)}$ should be initialized proportional to $\boldsymbol{Cd}^{(t-1)}$ and $\boldsymbol{Cv}^{(t-1)}$, respectively.
+
+### Aligning Vocabulary
+tLDA implements an algorithm to fold in new words. This method slightly modifies the posterior probabilities in $\boldsymbol{B}^{(t-1)}$ and adds a non-zero prior by modifying $\boldsymbol\eta^{(t)}$. It involves three steps. First, append columns to $\boldsymbol{B}^{(t-1)}$ and $\boldsymbol\eta^{(t)}$ that correspond to out-of-vocabulary words. Next, set the new entries for these new words to some small value, $\epsilon > 0$ in both $\boldsymbol{B}^{(t-1)}$ and $\boldsymbol\eta^{(t)}$. Finally, re-normalize the rows of $\boldsymbol{B}^{(t-1)}$ so that they sum to one. For computational reasons, $\epsilon$ must be greater than zero. The _tidylda_ implementation chooses $\epsilon$ to the lowest decile of all values in $\boldsymbol{B}^{(t-1)}$ or $\boldsymbol\eta^{(t)}$, respectively. 
+
+### Adding New Topics
+tLDA employs a similar method to add new, randomly initialized, topics if desired. This is achieved by appending rows to both $\boldsymbol\eta^{(t)}$ and $\boldsymbol{B}^{(t)}$, adding entries to $\boldsymbol\alpha$, and adding columns to $\boldsymbol\Theta^{(t)}$, obtained in step two above. The tLDA implementation in _tidylda_ sets the rows of $\boldsymbol\eta^{(t)}$ equal to the column means across previous topics. Then new rows of $\boldsymbol{B}^{(t)}$ are the new rows of $\boldsymbol\eta^{(t)}$ but normalized to sum to one. This effectively sets the prior for new topics equal to the average of the weighted posteriors of pre-existing topics.
+
+The choice of setting the prior to new topics as the average of pre-existing topics is admittedly subjective. A uniform prior over words is unrealistic, being inconsistent with Zipf's law [@zipf1949]. (See also the appendix in [@jones2019coefficient].) The average over existing topics is only one viable choice. Another choice might be to choose the shape of new $\boldsymbol\eta_k$ from an estimated Zipf's coefficient of $\boldsymbol{X}^{(t)}$ and choose the magnitude by another means.
+
+New entries to $\boldsymbol\alpha$ are initialized to be the median value of the pre-existing topics in $\boldsymbol\alpha$. Similarly, columns are appended to $\boldsymbol\Theta^{(t)}$. Entries for new topics are taken to be the median value for pre-existing topics on a per-document basis. This effectively places a uniform prior for new topics. This choice is also subjective. Other heuristic choices may be made, but it is not obvious that they would be any better or worse choices. 
+
+### Initializing $\boldsymbol{Cd}^{(t)}$ and $\boldsymbol{Cv}^{(t)}$
+Like most other LDA implementations, tLDA initializes tokens for $\boldsymbol{Cd}^{(t)}$ and $\boldsymbol{Cv}^{(t)}$ with a single Gibbs iteration. However, instead of sampling from a uniform random for this initial step, tLDA draws a topic for the $n$-th word of the $d$-th document from the following:
+
+\begin{align}
+  P(z_{d,n} = k) &= \boldsymbol\beta_{k,n}^{(t)} \cdot \boldsymbol\theta_{d,k}^{(t)}
+\end{align}
+
+After a single iteration, the number of times each topic was sampled at each document and word occurrence is counted to produce $\boldsymbol{Cd}^{(t)}$ and $\boldsymbol{Cv}^{(t)}$. After initialization where topic-word distributions are fixed, tLDA continues in a standard fashion, recalculating $\boldsymbol{Cd}^{(t)}$ and $\boldsymbol{Cv}^{(t)}$ (and therefore $P(z_{d,n} = k)$) at each step.
+
+# Experiments
+
+## Simulation Analysis
+
+
+
+### Simulation Setup
+
+### Findings
+
+## Emperical Analysis
+
+### Data Description
+
+### Findings
+
+# Discussion
+
+Note that you haven't explored adding expert input, but this could theoretically be encoded into the prior
+
+\newpage{}
+# Appendix 1
+
+\newpage{}
+# Appendix 2
+
+\newpage{}
+
+# References
