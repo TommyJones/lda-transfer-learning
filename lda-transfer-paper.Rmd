@@ -150,7 +150,7 @@ Another pair of critical values are $a^{(t)} = \frac{N^{(t)}}{N^{(t-1)}}$ and $a
 The overall tLDA algorithm proceeds in 6 steps.
 
 1. Construct $\boldsymbol\eta^{(t)}$
-2. Predict $\boldsymbol\Theta^{(t)}$ using topics from $\boldsymbol{B}^{(t-1)}$
+2. Predict $\hat{\boldsymbol\Theta}^{(t)}$ using topics from $\hat{\boldsymbol{B}}^{(t-1)}$
 3. Align vocabulary
 4. Add new topics
 5. Initialize $\boldsymbol{Cd}^{(t)}$ and $\boldsymbol{Cv}^{(t)}$
@@ -172,7 +172,7 @@ New entries to $\boldsymbol\alpha$ are initialized to be the median value of the
 Like most other LDA implementations, tLDA initializes tokens for $\boldsymbol{Cd}^{(t)}$ and $\boldsymbol{Cv}^{(t)}$ with a single Gibbs iteration. However, instead of sampling from a uniform random for this initial step, tLDA draws a topic for the $n$-th word of the $d$-th document from the following:
 
 \begin{align}
-  P(z_{d,n} = k) &= \boldsymbol\beta_{k,n}^{(t)} \cdot \boldsymbol\theta_{d,k}^{(t)}
+  P(z_{d,n} = k) &= \hat{\boldsymbol\beta}_{k,n}^{(t)} \cdot \hat{\boldsymbol\theta}_{d,k}^{(t)}
 \end{align}
 
 After a single iteration, the number of times each topic was sampled at each document and word occurrence is counted to produce $\boldsymbol{Cd}^{(t)}$ and $\boldsymbol{Cv}^{(t)}$. After initialization where topic-word distributions are fixed, tLDA continues in a standard fashion, recalculating $\boldsymbol{Cd}^{(t)}$ and $\boldsymbol{Cv}^{(t)}$ (and therefore $P(z_{d,n} = k)$) at each step.
@@ -180,8 +180,11 @@ After a single iteration, the number of times each topic was sampled at each doc
 # Experiments
 
 ## Simulation Analysis
+Under two assumptions, tLDA should converge to stable topic estimates as it is fine tuned on more data. Specifically, (1) if $\boldsymbol{X}^{(i)}$ and $\boldsymbol{X}^{(j)}$ are generated from the same distribution, $\forall i,j \geq 0, i \neq j$, and (2) if $a = 1$, then tLDA should converge to stable topic estimates. 
 
+However, unless a user correctly chooses $\boldsymbol\alpha$, $\boldsymbol\eta^{(0)}$, and $K$ there is no guarantee that tLDA will converge to _correct_ topic estimates. This is not a limitation of tLDA as selecting hyperparameters for any LDA model remains an open problem. Yet we hypothesize that there are heuristics one can use to get reasonably good estimates, so long as the two assumptions above hold.
 
+We use the fact that LDA is a generative model to conduct a simulation study. We find that tLDA is robust to choosing $K$ to be larger than the true number of topics and robust to incorrect---but common---choices for $\boldsymbol\alpha$ and $\boldsymbol\eta^{(0)}$. The study is described in more detail below.
 
 ### Simulation Setup
 
