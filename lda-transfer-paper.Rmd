@@ -47,16 +47,16 @@ Latent Dirichlet Allocation is a generative model for word frequencies. Let $\bo
 1. Generate $\boldsymbol{B}$ by sampling $K$ topics: $\boldsymbol\beta_k \sim \text{Dirichlet}(\boldsymbol\eta), \forall k \in \{1,2,...,K\}$
 2. Generate $\boldsymbol\Theta$ by sampling $D$ documents: $\boldsymbol\theta_d \sim \text{Dirichlet}(\boldsymbol\alpha), \forall d \in \{1,2, ..., D\}$
 3. Then for each document, $d$, and for each word in that document, $n$
-    a. Draw topic $z_{d,n}$ from $\text{Categorical}(\boldsymbol\theta_d)$
-    b. Draw word $w_{d,n}$ from $\text{Categorical}(\boldsymbol\beta_{z_{d,n}})$
+    a. Draw topic $z_{d_{n}}$ from $\text{Categorical}(\boldsymbol\theta_d)$
+    b. Draw word $w_{d_{n}}$ from $\text{Categorical}(\boldsymbol\beta_{z_{d_{n}}})$
     
 This process has a joint posterior of
 
 \begin{align}
   P(\mathbf{W},\mathbf{Z},\boldsymbol\Theta,\boldsymbol{B}|\boldsymbol\alpha,\boldsymbol\eta)
     &\propto \left[\prod_{d=1}^D \prod_{n=1}^{n_d} 
-      P(w_{d,n}|\boldsymbol\beta_{z_{d,n}})
-      P(z_{d,n}|\boldsymbol\theta_d)
+      P(w_{d_{n}}|\boldsymbol\beta_{z_{d_{n}}})
+      P(z_{d_{n}}|\boldsymbol\theta_d)
       P(\boldsymbol\theta_d|\boldsymbol\alpha)\right]
       \left[\prod_{k=1}^K P(\boldsymbol\beta_k|\boldsymbol\eta)\right]
 \end{align}
@@ -83,7 +83,7 @@ The above does not have an analytical closed form. However posterior estimates m
     \For{each word in the $d$-th context, $n$}{
       $Cd_{d, z^{(i-1)}}$ -= 1, $Cv_{z^{(i-1)}, n}$ -= 1\;
       sample $z$ such that 
-      $P(z = k) = \frac{Cv_{k, n} + \eta_n}{\sum_{v=1}^V Cv_{k, v} + \eta_v} \cdot \frac{Cd_{d, k} + \alpha_k}{\left(\sum_{k=1}^K Cd_{d, k} + \alpha_k\right) - 1}$\;
+      $P(z^{(i)} = k) = \frac{Cv_{k, n} + \eta_n}{\sum_{v=1}^V Cv_{k, v} + \eta_v} \cdot \frac{Cd_{d, k} + \alpha_k}{\left(\sum_{k=1}^K Cd_{d, k} + \alpha_k\right) - 1}$\;
       $Cd_{d,z^{(i)}}$ += 1, $Cv_{z^{(i)},n}$ += 1\;
     }
   }
@@ -118,9 +118,9 @@ tLDA is a model for updating topics in an existing model with new data, enabling
 Formally, tLDA can be stated as
 
 \begin{align}
-  z_{d,n}|\boldsymbol\theta_d &\sim 
+  z_{d_{n}}|\boldsymbol\theta_d &\sim 
     \text{Categorical}(\boldsymbol\theta_d)\\
-  w_{d,n}|z_{k},\boldsymbol\beta_k^{(t)} &\sim
+  w_{d_{n}}|z_{k},\boldsymbol\beta_k^{(t)} &\sim
     \text{Categorical}(\boldsymbol\beta_k^{(t)}) \\
   \boldsymbol\theta_d &\sim
     \text{Dirichlet}(\boldsymbol\alpha_d)\\
@@ -128,10 +128,10 @@ Formally, tLDA can be stated as
     \text{Dirichlet}(\omega_k^{(t)} \cdot \mathbb{E}\left[\boldsymbol\beta_k^{(t-1)}\right])
 \end{align}
 
-The above indicates that tLDA places a matrix prior for words over topics where $\boldsymbol\eta_k^{(t)} = \omega_k^{(t)} \cdot \mathbb{E}\left[\boldsymbol\beta_k^{(t-1)}\right]$. Because the posterior at time $t$ depends only on data at time $t$ and the state of the model at time $t-1$, tLDA models retain the Markov property.
+The above indicates that tLDA places a matrix prior for words over topics where $\eta_{k, v}^{(t)} = \omega_{k}^{(t)} \cdot \mathbb{E}\left[\beta_{k,v}^{(t-1)}\right] = \omega_{k}^{(t)} \cdot \frac{Cv_{k,v}^{(t-1)} + \eta_{k,v}^{(t-1)}}{\sum_{v=1}^V Cv_{k,v}^{(t-1)}}$. Because the posterior at time $t$ depends only on data at time $t$ and the state of the model at time $t-1$, tLDA models retain the Markov property.
 
 ### Selecting the prior weight
-Each $\omega_k^{(t)}$ tunes the relative weight between the base model (as prior) and new data in the posterior for each topic. This specification introduces $K$ new tuning parameters and setting $\omega_k^{(t)}$ directly is possible but not intuitive. Yet introducing a new parameter and performing some algebra collapses these $K$ tuning parameters into a single parameter with several intutive critical values. This tuning parameter, $a^{(t)}$, is related to each $\omega_k^{t}$ as follows:
+Each $\omega_k^{(t)}$ tunes the relative weight between the base model (as prior) and new data in the posterior for each topic. This specification introduces $K$ new tuning parameters and setting $\omega_k^{(t)}$ directly is possible but not intuitive. Yet introducing a new parameter and performing some algebra collapses these $K$ tuning parameters into a single parameter with several intutive critical values. This tuning parameter, $a^{(t)}$, is related to each $\omega_k^{(t)}$ as follows:
 
 \begin{align}
   \omega_k^{(t)} &=
@@ -172,19 +172,17 @@ New entries to $\boldsymbol\alpha$ are initialized to be the median value of the
 Like most other LDA implementations, tLDA initializes tokens for $\boldsymbol{Cd}^{(t)}$ and $\boldsymbol{Cv}^{(t)}$ with a single Gibbs iteration. However, instead of sampling from a uniform random for this initial step, tLDA draws a topic for the $n$-th word of the $d$-th document from the following:
 
 \begin{align}
-  P(z_{d,n} = k) &= \hat{\boldsymbol\beta}_{k,n}^{(t)} \cdot \hat{\boldsymbol\theta}_{d,k}^{(t)}
+  P(z_{d_{n}} = k) &= \hat{\boldsymbol\beta}_{k,n}^{(t)} \cdot \hat{\boldsymbol\theta}_{d,k}^{(t)}
 \end{align}
 
-After a single iteration, the number of times each topic was sampled at each document and word occurrence is counted to produce $\boldsymbol{Cd}^{(t)}$ and $\boldsymbol{Cv}^{(t)}$. After initialization where topic-word distributions are fixed, tLDA continues in a standard fashion, recalculating $\boldsymbol{Cd}^{(t)}$ and $\boldsymbol{Cv}^{(t)}$ (and therefore $P(z_{d,n} = k)$) at each step.
+After a single iteration, the number of times each topic was sampled at each document and word occurrence is counted to produce $\boldsymbol{Cd}^{(t)}$ and $\boldsymbol{Cv}^{(t)}$. After initialization where topic-word distributions are fixed, tLDA continues in a standard fashion, recalculating $\boldsymbol{Cd}^{(t)}$ and $\boldsymbol{Cv}^{(t)}$ (and therefore $P(z_{d_{n}} = k)$) at each step.
 
 # Experiments
 
 ## Simulation Analysis
-Under two assumptions, tLDA should converge to stable topic estimates as it is fine tuned on more data. Specifically, (1) if $\boldsymbol{X}^{(i)}$ and $\boldsymbol{X}^{(j)}$ are generated from the same distribution, $\forall i,j \geq 0, i \neq j$, and (2) if $a = 1$, then tLDA should converge to stable topic estimates. 
+Under two assumptions, tLDA should converge to stable topic estimates as it is fine tuned on more data. Specifically, (1) if $\boldsymbol{X}^{(i)}$ and $\boldsymbol{X}^{(j)}$ are generated from the same distribution, $\forall i,j \geq 0, i \neq j$, and (2) if $a = 1$, then tLDA should converge to stable topic estimates. However, unless a user correctly chooses $\boldsymbol\alpha$, $\boldsymbol\eta^{(0)}$, and $K$ there is no guarantee that tLDA will converge to _correct_ topic estimates. This is not a limitation of tLDA as selecting hyperparameters for any LDA model remains an open problem. Yet we hypothesize that there are heuristics one can use to get reasonably good estimates, so long as the two assumptions above hold.
 
-However, unless a user correctly chooses $\boldsymbol\alpha$, $\boldsymbol\eta^{(0)}$, and $K$ there is no guarantee that tLDA will converge to _correct_ topic estimates. This is not a limitation of tLDA as selecting hyperparameters for any LDA model remains an open problem. Yet we hypothesize that there are heuristics one can use to get reasonably good estimates, so long as the two assumptions above hold.
-
-We use the fact that LDA is a generative model to conduct a simulation study. We find that tLDA is robust to choosing $K$ to be larger than the true number of topics and robust to incorrect---but common---choices for $\boldsymbol\alpha$ and $\boldsymbol\eta^{(0)}$. The study is described in more detail below.
+LDA is a generative model, enabling simulation studies. In simulations, tLDA convergence is robust to choosing $K$ to be larger than the true number of topics and robust to incorrect---but common---choices for $\boldsymbol\alpha$ and $\boldsymbol\eta^{(0)}$. 
 
 ### Simulation Setup
 
@@ -202,6 +200,68 @@ Note that you haven't explored adding expert input, but this could theoretically
 
 \newpage{}
 # Appendix 1
+
+The posterior distribution of topic $k$ is
+
+\begin{align}
+  \boldsymbol\beta_k &\sim 
+    \text{Dirichlet}(\boldsymbol{Cv}_k + \boldsymbol\eta_k)
+\end{align}
+
+For two arbitrary sets of documents, we can break up the posterior parameter.
+
+\begin{align}
+  \boldsymbol\beta_k &\sim 
+    \text{Dirichlet}(\boldsymbol{Cv}_k^{(1)} + \boldsymbol{Cv}_k^{(2)} + \boldsymbol\eta_k)
+\end{align}
+
+This has two implications:
+
+1. We can quantify how much a set of documents contributes to the posterior topics. This may allow us to quantify biases in our topic models. (This is left for future research.)
+2. We can interpret the weight parameter, $\omega_k$ for transfer learning as the weight that documents from the base model affect the posterior of the fine-tuned model.
+
+Changing notation, for (2) we have
+
+\begin{align}
+  \boldsymbol\beta_k &\sim 
+    \text{Dirichlet}(\boldsymbol{Cv}_k^{(t)} + \boldsymbol\eta_k^{(t)})\\
+  &\sim
+    \text{Dirichlet}(\boldsymbol{Cv}_k^{(t)} + 
+      \boldsymbol{Cv}_k^{(t-1)} + \boldsymbol\eta_k^{(t-1)})
+\end{align}
+
+Substituting in the definition from tLDA, we have
+
+\begin{align}
+  \boldsymbol\eta_k^{(t)} &= 
+    \boldsymbol{Cv}_k^{(t-1)} + \boldsymbol\eta_k^{(t-1)}\\
+    &= 
+    \omega_k^{(t)} \cdot \mathbb{E}\left[\boldsymbol\beta_k^{(t-1)}\right]
+\end{align}
+
+Solving for $\omega_k^{(t)}$ in $\boldsymbol{Cv}_k^{(t-1)} + \boldsymbol\eta_k^{(t-1)} = \omega_k^{(t)} \cdot \mathbb{E}\left[\boldsymbol\beta_k^{(t-1)}\right]$ gives us
+
+\begin{align}
+  \omega_k^{*(t)} &=
+    \sum_{v=1}^V\left(Cv_{k,v}^{(t-1)} + \eta_{k,v}^{(t-1)} \right)
+\end{align}
+
+Where $\omega_k^{*(t)}$ is a critical value such that fine tuning is just like adding data to the base model. In other words each token from the base model, $\boldsymbol{X}^{(t-1)}$, has the same weight as each token from $\boldsymbol{X}^{(t)}$. This gives us an intuitive means to tune the weight of the base model when fine tuning and collapses $K$ tuning parameters into one. Specifically:
+
+\begin{align}
+  \omega_k^{(t)} 
+    &= a^{(t)} \cdot \omega_k^{*(t)}\\
+    &= a^{(t)} \cdot \sum_{v=1}^V\left(Cv_{k,v}^{(t-1)} + \eta_{k,v}^{(t-1)} \right)
+\end{align}
+
+and 
+
+\begin{align}
+  \boldsymbol\eta_k^{(t)}
+    &= a^{(t)} \cdot 
+      \sum_{v=1}^V\left(Cv_{k,v}^{(t-1)} + \eta_{k,v}^{(t-1)} \right) \cdot
+      \mathbb{E}\left[\boldsymbol\beta_k^{(t-1)}\right]
+\end{align}
 
 \newpage{}
 # Appendix 2
