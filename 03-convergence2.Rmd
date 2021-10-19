@@ -91,21 +91,25 @@ pars <- cross3(
     x
   })
 
-
-
-
-```
-
-```{r end-to-end}
-# add model number and directory to track results later
-for (j in seq_along(pars)) 
-  pars[[j]]$model_num <- j
-
+# save pars to track results later
 new_dir <- 
   paste0("data-derived/", clockmark, "/")
 
 if (! dir.exists(new_dir))
   dir.create(new_dir)
+
+save(
+  pars,
+  file = paste0(new_dir, "pop-pars.rds")
+)
+
+```
+
+```{r end-to-end}
+# add model number to track results later
+for (j in seq_along(pars)) 
+  pars[[j]]$model_num <- j
+
 
 hdist <- pars %>%
   parallel::mclapply(
@@ -211,7 +215,7 @@ hdist <- pars %>%
       # write models to file
       save(
         models,
-        file = paste0(new_dir, "m-", model_name, ".RData")
+        file = paste0(new_dir, "m-", model_name, ".rds")
       )
       
       # tibble of relevant pars/perf metrics
