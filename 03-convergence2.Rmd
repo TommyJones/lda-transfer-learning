@@ -16,6 +16,11 @@ library(tidytext)
 library(tidylda)
 library(magick)
 
+# create a common date/time for saving any elements to disk
+clockmark <-
+  Sys.time() %>%
+  str_replace_all("[^a-zA-Z0-9]+", "-")
+
 ```
 
 
@@ -92,13 +97,29 @@ pars <- cross3(
 ```
 
 ```{r end-to-end}
+# add model number and directory to track results later
+for (j in seq_along(pars)) 
+  pars[[j]]$model_num <- j
 
+new_dir <- 
+  paste0("data-derived/", clockmark, "/")
+
+if (! dir.exists(new_dir))
+  dir.create(new_dir)
 
 hdist <- pars %>%
   parallel::mclapply(
     function(p) {
       # pull out relevant objects
       pop_pars <- p$par$par
+      
+      model_name <- if (nchar(p$model_num) == 1) {
+        paste0("00", p$model_num)
+      } else if (nchar(p$model_num) == 2) {
+        paste0("0", p$model_num)
+      } else {
+        as.character(p$model_num)
+      }
       
       # generate documents
       doc_lengths <- rpois(
@@ -186,6 +207,12 @@ hdist <- pars %>%
         })
         
       }
+      
+      # write models to file
+      save(
+        models,
+        file = paste0(new_dir, "m-", model_name, ".RData")
+      )
       
       # tibble of relevant pars/perf metrics
       
@@ -363,8 +390,7 @@ if (! dir.exists("output/converge-heatmap")) {
 
 new_dir <- 
   paste0("output/converge-heatmap/",
-         Sys.time() %>%
-           str_replace_all("[^a-zA-Z0-9]+", "-"),
+         clockmark,
          "/"
   )
 
