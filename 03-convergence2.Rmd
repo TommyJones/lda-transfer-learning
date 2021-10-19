@@ -281,9 +281,8 @@ for (j in seq_along(hdist)) {
 }
 
 save(
-  pars,
   hdist,
-  file = "data-derived/convergence-data-2.RData"
+  file = paste0(new_dir, "hdist.rds")
 )
 
 ```
