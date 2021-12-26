@@ -109,7 +109,7 @@ tLDA is a model for updating topics in an existing model with new data, enabling
 
 1. Flexibility - Most prior work can only address use cases from one of the above categories. In theory, tLDA can address all three. However, exploring use of tLDA to encode expert input into the $\boldsymbol\eta$ prior is left to future work.
 2. Tunability - tLDA introduces only a single new tuning parameter, $a$. Its use is intuitive, balancing the ratio of tokens in $\boldsymbol{X}^{(t)}$ to the base model's data, $\boldsymbol{X}^{(t-1)}$. 
-3. Analyticsl - tLDA allows data sets and model updates to be chained together preserving the Markov property, enabling analytical study through incremental updates.
+3. Analytical - tLDA allows data sets and model updates to be chained together preserving the Markov property, enabling analytical study through incremental updates.
 
 # tLDA
 
